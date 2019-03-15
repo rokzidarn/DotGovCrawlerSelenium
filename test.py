@@ -6,6 +6,11 @@ from reppy.robots import Robots
 import hashlib
 from lxml import etree
 import base64
+from models import Site, Page, Image, PageData, PageType, DataType, Link
+import datetime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import create_engine, MetaData, Column, ForeignKey
+from sqlalchemy.orm import sessionmaker, relationship, query
 
 def run_crawler(self):
     while len(self.url_queue):  # If we have URLs to crawl - we crawl
@@ -80,8 +85,127 @@ def chrome_setup():
     driver.save_screenshot('data/chrome.png')
     driver.close()
 
+
+def insert_all(s):
+    site = Site(
+        domain='evem.gov.si',
+        robots_content='Allow: /',
+        sitemap_content='<html><p>hello</p></html>'
+    )
+    s.add(site)
+    s.commit()
+    site_id = site.id
+
+    now = datetime.datetime.now().date()
+    b = bytes("<html></html>", 'utf-8')
+    m = hashlib.md5()
+    m.update(b)
+    hashed = m.digest()
+    page = Page(
+        site_id=site_id,
+        page_type_code='HTML',
+        url='https://www.rtvslo.si',  # UNIQUE
+        html_content='<div>Hello</div>',
+        http_status_code=200,
+        accessed_time=now,
+        hash=hashed
+    )
+    s.add(page)
+    s.commit()
+    page_id = page.id
+
+    with open('data/chrome.png', "rb") as image_file:
+        encoded = base64.b64encode(image_file.read())
+    image = Image(
+        page_id=page_id,
+        filename='image.jpeg',
+        content_type='JPEG',
+        data=encoded,
+        accessed_time=now
+    )
+    s.add(image)
+    s.commit()
+
+    page_data = PageData(
+        page_id=page_id,
+        data_type_code='PDF',
+        data=encoded
+    )
+    s.add(page_data)
+    s.commit()
+
+    link = Link(
+        from_page=page_id,
+        to_page=page_id
+    )
+    s.add(link)
+    s.commit()
+
+
+def delete_all(s):
+    s.query(Image).delete()
+    s.commit()
+    s.query(Link).delete()
+    s.commit()
+    s.query(PageData).delete()
+    s.commit()
+    s.query(Page).delete()
+    s.commit()
+    s.query(Site).delete()
+    s.commit()
+
+
+def select_all(s):
+    stmt = s.query(Page)
+    pages = stmt.all()
+    if len(pages) > 0:
+        hashes = [pages.hash for pages in pages]
+        print(hashes)
+        print(hashes[0] == hashes[1])
+
+
+def uniqueness(s):
+    stmt = s.query(Site).filter(Site.domain == 'evem.gov.si')
+    site = stmt.first()
+    if site is not None:
+        site_id = site.id
+        print(site_id)
+
+        now = datetime.datetime.now().date()
+        b = bytes("<div></div>", 'utf-8')
+        m = hashlib.md5()
+        m.update(b)
+        hashed = m.digest()
+        page = Page(
+            site_id=site_id,
+            page_type_code='HTML',
+            url='https://www.najdi.si',  # UNIQUE
+            html_content='<div>Goodbye</div>',
+            http_status_code=200,
+            accessed_time=now,
+            hash=hashed
+        )
+        try:
+            s.add(page)
+            s.commit()
+        except Exception as e:
+            print(e)
+
+
 # MAIN
 # java -jar selenium-server-standalone-3.141.59.jar
 
 #firefox_setup()
-chrome_setup()
+#chrome_setup()
+
+meta = MetaData(schema="crawldb")
+Base = declarative_base(metadata=meta)
+DATABASE_URI = 'postgres+psycopg2://postgres:rokzidarn@localhost:5432/crawldb'
+
+engine = create_engine(DATABASE_URI)
+Base.metadata.create_all(engine)
+Session = sessionmaker(bind=engine)
+
+s = Session()
+delete_all(s)
+s.close()
