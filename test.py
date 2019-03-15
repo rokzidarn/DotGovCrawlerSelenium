@@ -12,6 +12,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import create_engine, MetaData, Column, ForeignKey
 from sqlalchemy.orm import sessionmaker, relationship, query
 
+
 def run_crawler(self):
     while len(self.url_queue):  # If we have URLs to crawl - we crawl
         current_url = self.url_queue.popleft()  # We grab a URL from the left of the list

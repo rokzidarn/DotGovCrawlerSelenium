@@ -7,7 +7,7 @@ from reppy.robots import Robots
 from lxml import etree
 import hashlib
 import base64
-from .models import Site, Page, Image, PageData, PageType, DataType, Link
+from models import Site, Page, Image, PageData, PageType, DataType, Link
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import create_engine, MetaData, Column, ForeignKey
 from sqlalchemy.orm import sessionmaker, relationship, query
