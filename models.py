@@ -149,7 +149,7 @@ def delete_all(s):
     s.commit()
 
 
-def select_all():
+def select_all(s):
     stmt = s.query(Page)
     pages = stmt.all()
     if len(pages) > 0:
@@ -158,7 +158,7 @@ def select_all():
         print(hashes[0] == hashes[1])
 
 
-def uniqueness():
+def uniqueness(s):
     stmt = s.query(Site).filter(Site.domain == 'evem.gov.si')
     site = stmt.first()
     if site is not None:
@@ -193,5 +193,5 @@ Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 
 s = Session()
-select_all()
+delete_all(s)
 s.close()
