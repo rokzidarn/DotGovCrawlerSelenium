@@ -1,12 +1,13 @@
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import create_engine, MetaData, Column, ForeignKey
-from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.orm import sessionmaker, relationship, query
 from sqlalchemy.dialects.mysql import TEXT, VARCHAR, INTEGER, TIMESTAMP, LONGBLOB, CHAR
 import datetime
 import base64
 import hashlib
 
 # https://learndatasci.com/tutorials/using-databases-python-postgres-sqlalchemy-and-alembic/
+# https://www.pythonsheets.com/notes/python-sqlalchemy.html
 
 meta = MetaData(schema="crawldb")
 Base = declarative_base(metadata=meta)
@@ -45,7 +46,7 @@ class Image(Base):
     page_id = Column(INTEGER, ForeignKey('page.id'))
     filename = Column(VARCHAR(255))
     content_type = Column(VARCHAR(50))
-    data = Column(LONGBLOB, nullable=False)  # TODO: bytea datatype in DB
+    data = Column(LONGBLOB, nullable=False)
     accessed_time = Column(TIMESTAMP)
 
 
@@ -79,7 +80,7 @@ class Link(Base):  # TODO: Link table - composite primary key
     to_page = Column(INTEGER, primary_key=True, nullable=False)
 
 
-def insert_test(s):
+def insert_all(s):
     site = Site(
         domain='evem.gov.si',
         robots_content='Allow: /',
@@ -97,7 +98,7 @@ def insert_test(s):
     page = Page(
         site_id=site_id,
         page_type_code='HTML',
-        url='https://www.rtvslo.si',
+        url='https://www.rtvslo.si',  # UNIQUE
         html_content='<div>Hello</div>',
         http_status_code=200,
         accessed_time=now,
@@ -135,6 +136,56 @@ def insert_test(s):
     s.commit()
 
 
+def delete_all(s):
+    s.query(Image).delete()
+    s.commit()
+    s.query(Link).delete()
+    s.commit()
+    s.query(PageData).delete()
+    s.commit()
+    s.query(Page).delete()
+    s.commit()
+    s.query(Site).delete()
+    s.commit()
+
+
+def select_all():
+    stmt = s.query(Page)
+    pages = stmt.all()
+    if len(pages) > 0:
+        hashes = [pages.hash for pages in pages]
+        print(hashes)
+        print(hashes[0] == hashes[1])
+
+
+def uniqueness():
+    stmt = s.query(Site).filter(Site.domain == 'evem.gov.si')
+    site = stmt.first()
+    if site is not None:
+        site_id = site.id
+        print(site_id)
+
+        now = datetime.datetime.now().date()
+        b = bytes("<div></div>", 'utf-8')
+        m = hashlib.md5()
+        m.update(b)
+        hashed = m.digest()
+        page = Page(
+            site_id=site_id,
+            page_type_code='HTML',
+            url='https://www.najdi.si',  # UNIQUE
+            html_content='<div>Goodbye</div>',
+            http_status_code=200,
+            accessed_time=now,
+            hash=hashed
+        )
+        try:
+            s.add(page)
+            s.commit()
+        except Exception as e:
+            print(e)
+
+
 # MAIN
 
 engine = create_engine(DATABASE_URI)
@@ -142,5 +193,5 @@ Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 
 s = Session()
-insert_test(s)
+select_all()
 s.close()

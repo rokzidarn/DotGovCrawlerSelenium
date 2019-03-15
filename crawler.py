@@ -52,10 +52,18 @@ class Crawler:
 
         for link in links:  # extract links
             url = link.get_attribute('href')
-            if 'javascript' not in url and 'mailto' not in url and not url.startswith('#'):
+            if 'javascript' not in url and 'mailto' not in url and not url.startswith('#') \
+                    and urlparse(url).netloc[-7:] == '.gov.si':  # URL, domain conditions
+
                 if url.startswith('/') or url.startswith(root_url):  # solve relative links
                     # if not (re.search("#|\?", url))
                     url = urljoin(root_url, url)
+
+                if url[-3:] == 'pdf' or url[-3:] == 'doc' or url[-3:] == 'ppt' \
+                        or url[-4:] == 'pptx' or url[-4:] == 'docx':  # extract files
+                    file_base64 = base64.b64encode(requests.get(url).content)
+                    print('FILE: ', file_base64)
+                    continue
 
                 if url not in self.scraped_pages and robots.allowed(url, '*'):
                     self.frontier.put(url)  # if page is not duplicated and is allowed in robots.txt, add to frontier
@@ -71,8 +79,6 @@ class Crawler:
                 image_base64 = base64.b64encode(requests.get(src).content)
                 print('IMAGE: ', image_base64)
 
-        # TODO: download other file types (PDF, DOC, DOCX, PPT, PPTX)
-
         driver.close()
 
     def scrape_page(self, url):
@@ -80,6 +86,7 @@ class Crawler:
         options.add_argument("headless")
         options.add_experimental_option("prefs", {"profile.default_content_settings.cookies": 2})  # disable cookies
         driver = webdriver.Chrome(options=options)
+        driver.implicitly_wait(10)  # TODO: ERROR: fix stale element reference: element is not attached to page document
 
         try:
             driver.get(url)
@@ -94,7 +101,7 @@ class Crawler:
         if result:
             self.extract_links_images(result['url'], result['driver'])
 
-    def run_scraper(self):
+    def run_crawler(self):
         while True:
             try:
                 url = self.frontier.get(timeout=60)
@@ -115,5 +122,6 @@ if __name__ == '__main__':
     # ['http://evem.gov.si', 'https://e-uprava.gov.si', 'https://podatki.gov.si', 'http://www.e-prostor.gov.si']
     seed_urls = ['http://evem.gov.si']
     s = Crawler(seed_urls, 5)  # number of workers
-    s.run_scraper()
-    # TODO: spider traps -> disable cookies, max length of URL
+    s.run_crawler()
+    # TODO: detect redirects
+    # TODO: crawl delay
