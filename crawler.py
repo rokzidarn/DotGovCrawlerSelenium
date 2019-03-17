@@ -88,7 +88,7 @@ class Crawler:
         return site_id
 
     def insert_page(self, site_id, base_url, html):
-        try:  # quick fix for Python SSL error
+        try:  # quick fix (SSL error, certificate verify failed)
             status_code = requests.get(base_url).status_code
         except:
             driver.close()
@@ -196,8 +196,6 @@ class Crawler:
                     if url not in self.scraped_pages and robots.allowed(url, '*') and ('#' not in url):
                         self.frontier.put(url)  # if page is not duplicated and is allowed in robots, add to frontier
 
-            # TODO: onclick Javascript events (location.href or document.location)
-
             for image in images:
                 src = image.get_attribute('src')
                 if src.startswith('http'):  # only add images with URL source, discard others
@@ -214,7 +212,7 @@ class Crawler:
         options.add_argument("headless")
         options.add_experimental_option("prefs", {"profile.default_content_settings.cookies": 2})  # disable cookies
         driver = webdriver.Chrome(options=options)
-        driver.implicitly_wait(5)  # TODO: ERROR: fix stale element reference: element is not attached to page document
+        driver.implicitly_wait(5)  # quick fix (stale element reference: element is not attached to page document)
 
         try:
             driver.get(url)
@@ -248,15 +246,17 @@ class Crawler:
 
 # MAIN
 if __name__ == '__main__':
-    # ['http://evem.gov.si', 'https://e-uprava.gov.si', 'https://podatki.gov.si', 'http://www.e-prostor.gov.si']
-    seed_urls = ['https://e-uprava.gov.si', 'https://podatki.gov.si', 'http://www.e-prostor.gov.si']
+    seeds = ['https://e-uprava.gov.si', 'https://podatki.gov.si', 'http://www.e-prostor.gov.si', 'http://evem.gov.si']
+    crawl = Crawler(seeds, 10)  # number of workers
     # sys.stdout = open('data/stdout.txt', 'w')
-    crawl = Crawler(seed_urls, 5)  # number of workers
+
     crawl.delete_all()
     crawl.run_crawler()
-    # TODO: detect redirects
-    # TODO: crawl delay
+
+    # TODO: Links table (+ composite PK), howto FRONTIER and DUPLICATE PageType
+    # TODO: onclick Javascript events (location.href or document.location)
+    # TODO: detect redirects (selenium cannot access status code -> requests package)
+    # TODO: crawl delay, spider traps
+    # TODO: image duplicates, .zip, .cls URLs?
     # TODO: pgAdmin4 dump DB
-    # TODO: image duplicates?
-    # TODO: .zip, .cls URLs?
-    # TODO: Links table (+PK), FRONTIER and DUPLICATE PageType
+    # TODO: visualization

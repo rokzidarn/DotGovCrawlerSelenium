@@ -1,4 +1,6 @@
 DotGovCrawlerSelenium
+---------------------
 
-Python + Selenium + Chromedriver
-Postgres + SQLAlchemy
+Web Information Extraction and Retrieval:
+    # Python + Selenium + Chromedriver
+    # Postgres + SQLAlchemy

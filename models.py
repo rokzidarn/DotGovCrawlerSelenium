@@ -70,7 +70,7 @@ class PageType(Base):
     pages = relationship("Page")
 
 
-class Link(Base):  # TODO: Link table - composite primary key
+class Link(Base):
     __tablename__ = "link"
 
     from_page = Column(INTEGER, primary_key=True, nullable=False)

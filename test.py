@@ -208,5 +208,4 @@ Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 
 s = Session()
-delete_all(s)
 s.close()
