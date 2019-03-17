@@ -209,3 +209,10 @@ Session = sessionmaker(bind=engine)
 
 s = Session()
 s.close()
+
+response = requests.get('http://dev.vitabits.org', verify=False, allow_redirects=True, timeout=50)
+print('status code:', response.status_code)
+print('starting url:', 'http://dev.vitabits.org')
+print('ending url:', response.url)
+print('history:', response.history)
+print('headers:', response.headers)
