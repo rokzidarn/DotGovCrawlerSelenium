@@ -1,6 +1,6 @@
 from selenium import webdriver
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.firefox.options import Options
+from selenium.webdriver.firefox.options import Options, DesiredCapabilities
 import requests
 from reppy.robots import Robots
 import hashlib
@@ -11,7 +11,7 @@ import datetime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import create_engine, MetaData, Column, ForeignKey
 from sqlalchemy.orm import sessionmaker, relationship, query
-
+import json
 
 def run_crawler(self):
     while len(self.url_queue):  # If we have URLs to crawl - we crawl
@@ -43,7 +43,7 @@ def robots_txt():
     print(robots)
     print(robots.allowed('http://www.e-prostor.gov.si/nc/', '*'))
     print(robots.allowed('http://www.e-prostor.gov.si/fileadmin/global/', '*'))
-
+    print('Crawl-delay: ', robots.agent('*').delay)
     print(robots.sitemaps)
     print(robots.agent('my-user-agent').delay)
 
@@ -79,11 +79,27 @@ def firefox_setup():
 def chrome_setup():
     options = webdriver.ChromeOptions()
     options.add_argument("headless")
+    d = DesiredCapabilities.CHROME
+    d['loggingPrefs'] = {'performance': 'ALL'}
     options.add_experimental_option("prefs", {"profile.default_content_settings.cookies": 2})  # disable cookies
-    driver = webdriver.Chrome(options=options)
+    driver = webdriver.Chrome(options=options, desired_capabilities=d)
     driver.get("https://evem.gov.si")
-    print(driver.page_source)
+    #print(driver.page_source)
+    performance_log = driver.get_log('performance')
+    #print(str(performance_log).strip('[]'))
+    for entry in driver.get_log('performance'):
+        print(entry)
     driver.save_screenshot('data/chrome.png')
+    driver.close()
+
+
+def phantomjs_setup():
+    driver = webdriver.PhantomJS()
+    driver.get("https://evem.gov.si")
+    #print(driver.page_source)
+    driver.save_screenshot('data/phantom.png')
+    status_code = json.loads(driver.get_log('har')[0]['message'])['log']['entries'][0]['response']['status']
+    print(status_code)
     driver.close()
 
 
@@ -198,6 +214,7 @@ def uniqueness(s):
 
 #firefox_setup()
 #chrome_setup()
+phantomjs_setup()
 
 meta = MetaData(schema="crawldb")
 Base = declarative_base(metadata=meta)
@@ -210,9 +227,4 @@ Session = sessionmaker(bind=engine)
 s = Session()
 s.close()
 
-response = requests.get('http://dev.vitabits.org', verify=False, allow_redirects=True, timeout=50)
-print('status code:', response.status_code)
-print('starting url:', 'http://dev.vitabits.org')
-print('ending url:', response.url)
-print('history:', response.history)
-print('headers:', response.headers)
+robots_txt()
