@@ -54,7 +54,7 @@ class Crawler:
 
         session.close()
 
-    def insert_site(self, root_url, robots):
+    def insert_site(self, root_url, robots, session):
         sitemaps = list(robots.sitemaps)  # get sitemaps
 
         if len(sitemaps) > 0:
@@ -66,8 +66,6 @@ class Crawler:
                 if candidate not in self.scraped_pages:
                     self.frontier.put(candidate)
 
-        session = self.create_session()
-
         if root_url not in self.scraped_sites:
             print('ROBOTS: ', robots)
             site = Site(
@@ -75,6 +73,7 @@ class Crawler:
                 robots_content=str(robots),
                 sitemap_content=sitemaps
             )
+
             session.add(site)
             session.commit()
 
@@ -84,10 +83,9 @@ class Crawler:
             site = session.query(Site).filter(Site.domain == root_url).first()
             site_id = site.id
 
-        session.close()
         return site_id
 
-    def insert_page(self, site_id, base_url, html):
+    def insert_page(self, site_id, base_url, html, session):
         try:  # quick fix (SSL error, certificate verify failed)
             status_code = requests.get(base_url).status_code
         except:
@@ -98,8 +96,6 @@ class Crawler:
         encoded = bytes(html, 'utf-8')
         md5.update(encoded)
         hashed = md5.digest()  # hash function on HTML code, check for duplication
-
-        session = self.create_session()
 
         pages = session.query(Page).all()
         hashes = [page.hash for page in pages]
@@ -129,11 +125,9 @@ class Crawler:
             session.commit()
             page_id = page.id
 
-        session.close()
         return page_id
 
-    def insert_image(self, page_id, src, encoded):
-        session = self.create_session()
+    def insert_image(self, page_id, src, encoded, session):
         content_type = src.split('.')
         filename = content_type[-2].split('/')
         print('IMAGE: ', src)
@@ -148,10 +142,8 @@ class Crawler:
 
         session.add(image)
         session.commit()
-        session.close()
 
-    def insert_page_data(self, site_id, url, encoded):
-        session = self.create_session()
+    def insert_page_data(self, site_id, url, encoded, session):
         pages = session.query(Page).all()
         urls = [page.url for page in pages]
 
@@ -178,16 +170,16 @@ class Crawler:
             session.add(page_data)
             session.commit()
 
-        session.close()
-
     def extract_links_images(self, base_url, driver, robots):
         html = driver.page_source
         links = driver.find_elements_by_xpath("//a[@href]")
         images = driver.find_elements_by_xpath("//img[@src]")
         root_url = '{}://{}'.format(urlparse(base_url).scheme, urlparse(base_url).netloc)  # canonical
 
-        site_id = self.insert_site(root_url, robots)
-        page_id = self.insert_page(site_id, base_url, html)
+        session = self.create_session()
+
+        site_id = self.insert_site(root_url, robots, session)
+        page_id = self.insert_page(site_id, base_url, html, session)
 
         if page_id is not None:
             for link in links:  # extract links
@@ -205,7 +197,7 @@ class Crawler:
                             or url[-4:] == 'pptx' or url[-4:] == 'docx':  # extract files
 
                         file_base64 = base64.b64encode(requests.get(url).content)
-                        self.insert_page_data(site_id, url, file_base64)
+                        self.insert_page_data(site_id, url, file_base64, session)
                         continue
 
                     if url not in self.scraped_pages and robots.allowed(url, '*') and ('#' not in url):
@@ -220,9 +212,10 @@ class Crawler:
                         src = urljoin(root_url, src)
 
                     image_base64 = base64.b64encode(requests.get(src).content)
-                    self.insert_image(page_id, src, image_base64)
+                    self.insert_image(page_id, src, image_base64, session)
                     image_sources.append(src)
 
+        session.close()
         driver.close()
 
     def scrape_page(self, url):
@@ -277,7 +270,7 @@ if __name__ == '__main__':
     # sys.stdout = open('data/stdout.txt', 'w')
 
     crawl.delete_all()
-    crawl.run_crawler()
+    crawl.run_crawler()  # SELECT sum(numbackends) FROM pg_stat_database;
 
     # TODO: Links table (+ composite PK)
     # TODO: onclick Javascript events (location.href or document.location)
