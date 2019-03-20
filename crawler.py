@@ -10,7 +10,7 @@ import base64
 from models import Site, Page, Image, PageData, PageType, DataType, Link
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import create_engine, MetaData, Column, ForeignKey
-from sqlalchemy.orm import sessionmaker, relationship, query
+from sqlalchemy.orm import sessionmaker, relationship, query, scoped_session
 from sqlalchemy.dialects.mysql import TEXT, VARCHAR, INTEGER, TIMESTAMP, LONGBLOB, CHAR
 import datetime
 import sys
@@ -23,6 +23,7 @@ class Crawler:
         self.pool = ThreadPoolExecutor(max_workers=num_workers)  # parallel crawling, multiple workers
         self.scraped_pages = set([''])  # set of already scraped pages, needed to test duplication
         self.scraped_sites = set([''])  # set of already scraped sites
+        self.robots = dict()  # all robots.txt data from each site
         self.frontier = Queue()  # BFS implementation, FIFO
         for seed in seed_urls:
             self.frontier.put(seed)
@@ -31,15 +32,19 @@ class Crawler:
         meta = MetaData(schema="crawldb")
         Base = declarative_base(metadata=meta)
         DATABASE_URI = 'postgres+psycopg2://postgres:rokzidarn@localhost:5432/crawldb'
-
         engine = create_engine(DATABASE_URI)
         Base.metadata.create_all(engine)
-        Session = sessionmaker(bind=engine)
 
-        return Session()
+        # Session = sessionmaker(bind=engine)
+
+        session_factory = sessionmaker(bind=engine)
+
+        return session_factory
 
     def delete_all(self):
-        session = self.create_session()
+        session_factory = self.create_session()
+        Session = scoped_session(session_factory)
+        session = Session()
 
         session.query(Image).delete()
         session.commit()
@@ -52,7 +57,7 @@ class Crawler:
         session.query(Site).delete()
         session.commit()
 
-        session.close()
+        Session.remove()
 
     def insert_site(self, root_url, robots, session):
         sitemaps = list(robots.sitemaps)  # get sitemaps
@@ -130,7 +135,7 @@ class Crawler:
     def insert_image(self, page_id, src, encoded, session):
         content_type = src.split('.')
         filename = content_type[-2].split('/')
-        print('IMAGE: ', src)
+        #print('IMAGE: ', src)
 
         image = Image(
             page_id=page_id,
@@ -176,7 +181,9 @@ class Crawler:
         images = driver.find_elements_by_xpath("//img[@src]")
         root_url = '{}://{}'.format(urlparse(base_url).scheme, urlparse(base_url).netloc)  # canonical
 
-        session = self.create_session()
+        session_factory = self.create_session()
+        Session = scoped_session(session_factory)
+        session = Session()
 
         site_id = self.insert_site(root_url, robots, session)
         page_id = self.insert_page(site_id, base_url, html, session)
@@ -215,7 +222,7 @@ class Crawler:
                     self.insert_image(page_id, src, image_base64, session)
                     image_sources.append(src)
 
-        session.close()
+        Session.remove()
         driver.close()
 
     def scrape_page(self, url):
@@ -223,15 +230,21 @@ class Crawler:
         options.add_argument("headless")
         options.add_experimental_option("prefs", {"profile.default_content_settings.cookies": 2})  # disable cookies
         driver = webdriver.Chrome(options=options)
-
         root_url = '{}://{}'.format(urlparse(url).scheme, urlparse(url).netloc)  # canonical
-        robots = Robots.fetch(root_url + '/robots.txt')  # robots.txt file
-        crawl_delay = robots.agent('*').delay
 
-        if crawl_delay is None:
-            driver.implicitly_wait(5)  # quick fix (stale element reference: element is not attached to page document)
+        if root_url in self.robots:
+            robots = self.robots.get(root_url)
         else:
-            driver.implicitly_wait(int(crawl_delay))
+            robots = Robots.fetch(root_url + '/robots.txt')
+            self.robots.update({root_url: robots})
+
+        cdelay = robots.agent('*').delay
+        if cdelay is None:
+            crawl_delay = 5
+        else:
+            crawl_delay = int(cdelay)
+
+        driver.implicitly_wait(crawl_delay)
 
         try:
             driver.get(url)
@@ -265,7 +278,7 @@ class Crawler:
 
 # MAIN
 if __name__ == '__main__':
-    seeds = ['https://e-uprava.gov.si', 'https://podatki.gov.si', 'http://www.e-prostor.gov.si', 'http://evem.gov.si']
+    seeds = ['https://e-uprava.gov.si', 'https://podatki.gov.si', 'http://www.e-prostor.gov.si']  # 'http://evem.gov.si'
     crawl = Crawler(seeds, 5)  # number of workers
     # sys.stdout = open('data/stdout.txt', 'w')
 
