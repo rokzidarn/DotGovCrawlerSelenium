@@ -96,7 +96,6 @@ class Crawler:
         try:  # quick fix (SSL error, certificate verify failed)
             status_code = requests.get(base_url).status_code
         except:
-            driver.close()
             return None
 
         md5 = hashlib.md5()  # compare exact HTML code (md5 hash function)
