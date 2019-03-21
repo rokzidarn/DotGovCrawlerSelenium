@@ -39,10 +39,10 @@ class Crawler:
 
         session_factory = sessionmaker(bind=engine)
 
-        return session_factory
+        return session_factory, engine
 
     def delete_all(self):
-        session_factory = self.create_session()
+        session_factory, engine = self.create_session()
         Session = scoped_session(session_factory)
         session = Session()
 
@@ -57,6 +57,8 @@ class Crawler:
         session.query(Site).delete()
         session.commit()
 
+        engine.dispose()
+        session.close()
         Session.remove()
 
     def insert_site(self, root_url, robots, session):
@@ -156,24 +158,27 @@ class Crawler:
             content_type = url.split('.')[-1].upper()
             print('FILE: ', url)
 
-            page = Page(
-                site_id=site_id,
-                page_type_code='BINARY',
-                url=url,
-                http_status_code=200,
-                accessed_time=datetime.datetime.now().date(),
-            )
-            session.add(page)
-            session.commit()
-            page_id = page.id
+            try:
+                page = Page(
+                    site_id=site_id,
+                    page_type_code='BINARY',
+                    url=url,
+                    http_status_code=200,
+                    accessed_time=datetime.datetime.now().date(),
+                )
+                session.add(page)
+                session.commit()
+                page_id = page.id
 
-            page_data = PageData(
-                page_id=page_id,
-                data_type_code=content_type,
-                data=encoded
-            )
-            session.add(page_data)
-            session.commit()
+                page_data = PageData(
+                    page_id=page_id,
+                    data_type_code=content_type,
+                    data=encoded
+                )
+                session.add(page_data)
+                session.commit()
+            except:
+                session.rollback()
 
     def extract_links_images(self, base_url, driver, robots):
         html = driver.page_source
@@ -181,7 +186,7 @@ class Crawler:
         images = driver.find_elements_by_xpath("//img[@src]")
         root_url = '{}://{}'.format(urlparse(base_url).scheme, urlparse(base_url).netloc)  # canonical
 
-        session_factory = self.create_session()
+        session_factory, engine = self.create_session()
         Session = scoped_session(session_factory)
         session = Session()
 
@@ -222,6 +227,8 @@ class Crawler:
                     self.insert_image(page_id, src, image_base64, session)
                     image_sources.append(src)
 
+        engine.dispose()
+        session.close()
         Session.remove()
         driver.close()
 
@@ -269,7 +276,6 @@ class Crawler:
                     job = self.pool.submit(self.scrape_page, url)  # setup driver, get page from URL
                     job.add_done_callback(self.post_scrape_callback)  # get/save data to DB
             except Empty:  # if queue is empty for 60s stop crawling
-                session.close()
                 return
             except Exception as e:  # ignore all other exceptions
                 print(e)
