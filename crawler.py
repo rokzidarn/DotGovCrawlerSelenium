@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker, relationship, query, scoped_session
 from sqlalchemy.dialects.mysql import TEXT, VARCHAR, INTEGER, TIMESTAMP, LONGBLOB, CHAR
 import datetime
 import sys
-
+import time
 
 # http://edmundmartin.com/multi-threaded-crawler-in-python/
 class Crawler:
@@ -179,10 +179,22 @@ class Crawler:
             except:
                 session.rollback()
 
+    def insert_link(self, parent_page, current_page, session):
+        # we need all connections
+        link = Link(
+            from_page=parent_page,
+            to_page=current_page
+        )
+
+        session.add(link)
+        session.commit()
+
     def extract_links_images(self, base_url, driver, robots):
         html = driver.page_source
         links = driver.find_elements_by_xpath("//a[@href]")
         images = driver.find_elements_by_xpath("//img[@src]")
+        events = driver.find_elements_by_xpath("//*[@onclick]")
+        current_url = driver.current_url
         root_url = '{}://{}'.format(urlparse(base_url).scheme, urlparse(base_url).netloc)  # canonical
 
         session_factory, engine = self.create_session()
@@ -213,6 +225,30 @@ class Crawler:
 
                     if url not in self.scraped_pages and robots.allowed(url, '*') and ('#' not in url):
                         self.frontier.put(url)  # if page is not duplicated and is allowed in robots, add to frontier
+
+            for event in events:
+                event.click()  # if onclick has window.location.href it will open new page
+                driver.implicitly_wait(2)
+                url = driver.current_url
+                if url != current_url:
+                    if 'javascript' not in url and 'mailto' not in url and not url.startswith('#') \
+                            and urlparse(url).netloc[-7:] == '.gov.si' \
+                            and urlparse(url).netloc[-4:] != '.zip' and urlparse(url).netloc[-4:] != '.cls':
+                        # URL, domain conditions
+
+                        if url.startswith('/') or url.startswith(root_url):  # solve relative links
+                            # if not (re.search("#|\?", url))
+                            url = urljoin(root_url, url)
+
+                        if url[-3:] == 'pdf' or url[-3:] == 'doc' or url[-3:] == 'ppt' \
+                                or url[-4:] == 'pptx' or url[-4:] == 'docx':  # extract files
+
+                            file_base64 = base64.b64encode(requests.get(url).content)
+                            self.insert_page_data(site_id, url, file_base64, session)
+                            continue
+
+                        if url not in self.scraped_pages and robots.allowed(url, '*') and ('#' not in url):
+                            self.frontier.put(url)  # if page is not duplicated and is allowed in robots, add to frontier
 
             image_sources = list()
             for image in images:
@@ -279,7 +315,6 @@ class Crawler:
             except Exception as e:  # ignore all other exceptions
                 print(e)
                 continue
-
 
 # MAIN
 if __name__ == '__main__':
