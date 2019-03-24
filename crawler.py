@@ -26,7 +26,7 @@ class Crawler:
         self.robots = dict()  # all robots.txt data from each site
         self.frontier = Queue()  # BFS implementation, FIFO
         for seed in seed_urls:
-            self.frontier.put(seed)
+            self.frontier.put([seed, 0])
 
     def create_session(self):
         meta = MetaData(schema="crawldb")
@@ -71,7 +71,7 @@ class Crawler:
                 children = sitemap.getchildren()
                 candidate = children[0].text  # if sitemap link is not in frontier, add to it
                 if candidate not in self.scraped_pages:
-                    self.frontier.put(candidate)
+                    self.frontier.put([candidate, 0])
 
         if root_url not in self.scraped_sites:
             print('ROBOTS: ', robots)
@@ -156,30 +156,34 @@ class Crawler:
         if url not in urls:
             content_type = url.split('.')[-1].upper()
             print('FILE: ', url)
+            page = Page(
+                site_id=site_id,
+                page_type_code='BINARY',
+                url=url,
+                http_status_code=200,
+                accessed_time=datetime.datetime.now().date(),
+            )
+            session.add(page)
+            session.commit()
+            page_id = page.id
 
-            try:
-                page = Page(
-                    site_id=site_id,
-                    page_type_code='BINARY',
-                    url=url,
-                    http_status_code=200,
-                    accessed_time=datetime.datetime.now().date(),
-                )
-                session.add(page)
-                session.commit()
-                page_id = page.id
+            page_data = PageData(
+                page_id=page_id,
+                data_type_code=content_type,
+                data=encoded
+            )
+            session.add(page_data)
+            session.commit()
 
-                page_data = PageData(
-                    page_id=page_id,
-                    data_type_code=content_type,
-                    data=encoded
-                )
-                session.add(page_data)
-                session.commit()
-            except:
-                session.rollback()
+    def insert_link(self, page_id, from_id, session):
+        link = Link(
+            from_page=from_id,
+            to_page=page_id
+        )
+        session.add(link)
+        session.commit()
 
-    def extract_links_images(self, base_url, driver, robots):
+    def extract_links_images(self, base_url, driver, robots, from_id):
         html = driver.page_source
         links = driver.find_elements_by_xpath("//a[@href]")
         images = driver.find_elements_by_xpath("//img[@src]")
@@ -191,6 +195,8 @@ class Crawler:
 
         site_id = self.insert_site(root_url, robots, session)
         page_id = self.insert_page(site_id, base_url, html, session)
+        if from_id != 0:
+            self.insert_link(page_id, from_id, session)
 
         if page_id is not None:
             for link in links:  # extract links
@@ -212,7 +218,8 @@ class Crawler:
                         continue
 
                     if url not in self.scraped_pages and robots.allowed(url, '*') and ('#' not in url):
-                        self.frontier.put(url)  # if page is not duplicated and is allowed in robots, add to frontier
+                        self.frontier.put([url, page_id])
+                        # if page is not duplicated and is allowed in robots, add to frontier
 
             image_sources = list()
             for image in images:
@@ -231,7 +238,10 @@ class Crawler:
         Session.remove()
         driver.close()
 
-    def scrape_page(self, url):
+    def scrape_page(self, url_data):
+        url = url_data[0]
+        from_id = url_data[1]
+
         options = webdriver.ChromeOptions()
         options.add_argument("headless")
         options.add_experimental_option("prefs", {"profile.default_content_settings.cookies": 2})  # disable cookies
@@ -246,7 +256,7 @@ class Crawler:
 
         cdelay = robots.agent('*').delay
         if cdelay is None:
-            crawl_delay = 5
+            crawl_delay = 7
         else:
             crawl_delay = int(cdelay)
 
@@ -254,7 +264,7 @@ class Crawler:
 
         try:
             driver.get(url)
-            res = {'url': url, 'driver': driver, 'robots': robots}
+            res = {'url': url, 'driver': driver, 'robots': robots, 'from_id': from_id}
             return res  # result passed to callback function
         except:
             print('PROBLEM: ', url)
@@ -263,16 +273,16 @@ class Crawler:
     def post_scrape_callback(self, res):
         result = res.result()
         if result:
-            self.extract_links_images(result['url'], result['driver'], result['robots'])
+            self.extract_links_images(result['url'], result['driver'], result['robots'], result['from_id'])
 
     def run_crawler(self):
         while True:
             try:
-                url = self.frontier.get(timeout=60)
-                if url not in self.scraped_pages:
-                    print('URL: ', url)
-                    self.scraped_pages.add(url)
-                    job = self.pool.submit(self.scrape_page, url)  # setup driver, get page from URL
+                url_data = self.frontier.get(timeout=60)
+                if url_data[0] not in self.scraped_pages:
+                    print('URL: ', url_data[0])
+                    self.scraped_pages.add(url_data[0])
+                    job = self.pool.submit(self.scrape_page, url_data)  # setup driver, get page from URL
                     job.add_done_callback(self.post_scrape_callback)  # get/save data to DB
             except Empty:  # if queue is empty for 60s stop crawling
                 return
@@ -283,13 +293,14 @@ class Crawler:
 
 # MAIN
 if __name__ == '__main__':
-    seeds = ['https://e-uprava.gov.si', 'https://podatki.gov.si', 'http://www.e-prostor.gov.si']  # 'http://evem.gov.si'
+    seeds = ['https://e-uprava.gov.si', 'https://podatki.gov.si', 'http://www.e-prostor.gov.si', 'http://evem.gov.si']
+    # 'http://evem.gov.si'
     crawl = Crawler(seeds, 5)  # number of workers
     # sys.stdout = open('data/stdout.txt', 'w')
 
     crawl.delete_all()
-    crawl.run_crawler()  # SELECT sum(numbackends) FROM pg_stat_database;
+    crawl.run_crawler()
 
-    # TODO: Links table (+ composite PK)
-    # TODO: onclick Javascript events (location.href or document.location)
+    # SELECT sum(numbackends) FROM pg_stat_database;
+    # https://stackoverflow.com/questions/30778015/how-to-increase-the-max-connections-in-postgres
     # TODO: visualization - Gephi
