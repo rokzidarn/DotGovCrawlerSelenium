@@ -14,6 +14,7 @@ from sqlalchemy.orm import sessionmaker, relationship, query, scoped_session
 from sqlalchemy.dialects.mysql import TEXT, VARCHAR, INTEGER, TIMESTAMP, LONGBLOB, CHAR
 import datetime
 import sys
+import re
 
 
 # http://edmundmartin.com/multi-threaded-crawler-in-python/
@@ -61,7 +62,7 @@ class Crawler:
         session.close()
         Session.remove()
 
-    def insert_site(self, root_url, robots, session):
+    def insert_site(self, domain, robots, session):
         sitemaps = list(robots.sitemaps)  # get sitemaps
 
         if len(sitemaps) > 0:
@@ -73,10 +74,10 @@ class Crawler:
                 if candidate not in self.scraped_pages:
                     self.frontier.put([candidate, 0])
 
-        if root_url not in self.scraped_sites:
+        if domain not in self.scraped_sites:
             print('ROBOTS: ', robots)
             site = Site(
-                domain=root_url,
+                domain=domain,
                 robots_content=str(robots),
                 sitemap_content=sitemaps
             )
@@ -84,10 +85,10 @@ class Crawler:
             session.add(site)
             session.commit()
 
-            self.scraped_sites.add(root_url)
+            self.scraped_sites.add(domain)
             site_id = site.id
         else:
-            site = session.query(Site).filter(Site.domain == root_url).first()
+            site = session.query(Site).filter(Site.domain == domain).first()
             site_id = site.id
 
         return site_id
@@ -187,13 +188,15 @@ class Crawler:
         html = driver.page_source
         links = driver.find_elements_by_xpath("//a[@href]")
         images = driver.find_elements_by_xpath("//img[@src]")
+        r = re.compile(r"https?://(www\.)?")
         root_url = '{}://{}'.format(urlparse(base_url).scheme, urlparse(base_url).netloc)  # canonical
+        domain = r.sub('', root_url).strip().strip('/')
 
         session_factory, engine = self.create_session()
         Session = scoped_session(session_factory)
         session = Session()
 
-        site_id = self.insert_site(root_url, robots, session)
+        site_id = self.insert_site(domain, robots, session)
         page_id = self.insert_page(site_id, base_url, html, session)
         if from_id != 0:
             self.insert_link(page_id, from_id, session)
@@ -214,7 +217,8 @@ class Crawler:
                             or url[-4:] == 'pptx' or url[-4:] == 'docx':  # extract files
 
                         file_base64 = base64.b64encode(requests.get(url).content)
-                        self.insert_page_data(site_id, url, file_base64, session)
+                        if (len(file_base64)*3)/4 < 10000000:  # only files smaller than 10MB are saved
+                            self.insert_page_data(site_id, url, file_base64, session)
                         continue
 
                     if url not in self.scraped_pages and robots.allowed(url, '*') and ('#' not in url):
@@ -256,7 +260,7 @@ class Crawler:
 
         cdelay = robots.agent('*').delay
         if cdelay is None:
-            crawl_delay = 7
+            crawl_delay = 8
         else:
             crawl_delay = int(cdelay)
 
@@ -295,7 +299,7 @@ class Crawler:
 if __name__ == '__main__':
     seeds = ['https://e-uprava.gov.si', 'https://podatki.gov.si', 'http://www.e-prostor.gov.si', 'http://evem.gov.si']
     # 'http://evem.gov.si'
-    crawl = Crawler(seeds, 5)  # number of workers
+    crawl = Crawler(seeds, 8)  # number of workers
     # sys.stdout = open('data/stdout.txt', 'w')
 
     crawl.delete_all()
@@ -303,4 +307,3 @@ if __name__ == '__main__':
 
     # SELECT sum(numbackends) FROM pg_stat_database;
     # https://stackoverflow.com/questions/30778015/how-to-increase-the-max-connections-in-postgres
-    # TODO: visualization - Gephi

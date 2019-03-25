@@ -12,6 +12,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy import create_engine, MetaData, Column, ForeignKey
 from sqlalchemy.orm import sessionmaker, relationship, query
 import json
+from urllib.parse import urljoin, urlparse
 
 def run_crawler(self):
     while len(self.url_queue):  # If we have URLs to crawl - we crawl
@@ -64,6 +65,21 @@ def hash_function():
     m.update(b)
     hashed = m.digest()
     print(hashed)
+
+
+def domain():
+    import re
+    r = re.compile(r"https?://(www\.)?")
+    url = 'https://google.com/images'
+    root_url = '{}://{}'.format(urlparse(url).scheme,
+                                urlparse(url).netloc)
+    domain = r.sub('', root_url).strip().strip('/')
+    print(domain)
+
+
+def filesize(url):
+    file_base64 = base64.b64encode(requests.get(url).content)
+    print((len(file_base64) * 3) / 4)
 
 
 def firefox_setup():
@@ -214,7 +230,7 @@ def uniqueness(s):
 
 #firefox_setup()
 #chrome_setup()
-phantomjs_setup()
+#phantomjs_setup()
 
 meta = MetaData(schema="crawldb")
 Base = declarative_base(metadata=meta)
@@ -227,4 +243,4 @@ Session = sessionmaker(bind=engine)
 s = Session()
 s.close()
 
-robots_txt()
+filesize("http://www.e-prostor.gov.si/fileadmin/Aplikacije/Javni_vpogled_v_nepremicnine/Koncept_javnega_vpogleda_2012_v1_3.pdf")
