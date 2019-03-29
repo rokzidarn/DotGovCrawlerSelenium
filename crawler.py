@@ -93,7 +93,7 @@ class Crawler:
 
         return site_id
 
-    def insert_page(self, site_id, base_url, html, session):
+    def insert_page(self, site_id, base_url, html, session, frontier=False):
         try:  # quick fix (SSL error, certificate verify failed)
             status_code = requests.get(base_url).status_code
         except:
@@ -103,6 +103,19 @@ class Crawler:
         encoded = bytes(html, 'utf-8')
         md5.update(encoded)
         hashed = md5.digest()  # hash function on HTML code, check for duplication
+
+        if frontier:
+            page = Page(
+                site_id=site_id,
+                page_type_code='FRONTIER',
+                url=base_url,
+                http_status_code=status_code,
+                accessed_time=datetime.datetime.now().date(),
+                hash=hashed
+            )
+            session.add(page)
+            session.commit()
+            return page.id
 
         pages = session.query(Page).all()
         hashes = [page.hash for page in pages]
@@ -120,17 +133,24 @@ class Crawler:
             session.commit()
             page_id = page.id
         else:
-            page = Page(
-                site_id=site_id,
-                page_type_code='DUPLICATE',
-                url=base_url,
-                http_status_code=status_code,
-                accessed_time=datetime.datetime.now().date(),
-                hash=hashed
-            )
-            session.add(page)
-            session.commit()
-            page_id = page.id
+            page = session.query(Page).filter_by(hash=hashed).first()
+            if page.page_type_code == 'FRONTIER':  # update page
+                page.page_type_code = 'HTML'
+                page.html_content = html
+                session.commit()
+                page_id = page.id
+            else:
+                page = Page(
+                    site_id=site_id,
+                    page_type_code='DUPLICATE',
+                    url=base_url,
+                    http_status_code=status_code,
+                    accessed_time=datetime.datetime.now().date(),
+                    hash=hashed
+                )
+                session.add(page)
+                session.commit()
+                page_id = page.id
 
         return page_id
 
@@ -224,6 +244,7 @@ class Crawler:
                     if url not in self.scraped_pages and robots.allowed(url, '*') and ('#' not in url):
                         self.frontier.put([url, page_id])
                         # if page is not duplicated and is allowed in robots, add to frontier
+                        self.insert_page(site_id, url, html, session, True)
 
             image_sources = list()
             for image in images:
