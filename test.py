@@ -14,19 +14,6 @@ from sqlalchemy.orm import sessionmaker, relationship, query
 import json
 from urllib.parse import urljoin, urlparse
 
-def run_crawler(self):
-    while len(self.url_queue):  # If we have URLs to crawl - we crawl
-        current_url = self.url_queue.popleft()  # We grab a URL from the left of the list
-        self.crawled_urls.append(current_url)  # We then add this URL to our crawled list
-        html = self.get_page(current_url)
-        if self.browser.current_url != current_url:
-            self.crawled_urls.append(current_url)
-        soup = self.get_soup(html)
-        if soup is not None:  # If we have soup - parse and write to our csv file
-            self.get_links(soup)
-            title = self.get_data(soup)
-            self.csv_output(current_url, title)
-
 
 def search(driver):
     driver.get("http://www.python.org")
@@ -100,7 +87,7 @@ def chrome_setup():
     options.add_experimental_option("prefs", {"profile.default_content_settings.cookies": 2})  # disable cookies
     driver = webdriver.Chrome(options=options, desired_capabilities=d)
     driver.get("https://evem.gov.si")
-    #print(driver.page_source)
+    print(driver.page_source)
     performance_log = driver.get_log('performance')
     #print(str(performance_log).strip('[]'))
     for entry in driver.get_log('performance'):
@@ -112,10 +99,10 @@ def chrome_setup():
 def phantomjs_setup():
     driver = webdriver.PhantomJS()
     driver.get("https://evem.gov.si")
-    #print(driver.page_source)
+    print(driver.page_source)
     driver.save_screenshot('data/phantom.png')
     status_code = json.loads(driver.get_log('har')[0]['message'])['log']['entries'][0]['response']['status']
-    print(status_code)
+    #print(status_code)
     driver.close()
 
 
@@ -241,6 +228,5 @@ Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 
 s = Session()
-s.close()
 
-filesize("http://www.e-prostor.gov.si/fileadmin/Aplikacije/Javni_vpogled_v_nepremicnine/Koncept_javnega_vpogleda_2012_v1_3.pdf")
+s.close()

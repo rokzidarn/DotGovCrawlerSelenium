@@ -27,17 +27,15 @@ class Crawler:
         self.robots = dict()  # all robots.txt data from each site
         self.frontier = Queue()  # BFS implementation, FIFO
         for seed in seed_urls:
-            self.frontier.put([seed, 0])
+            self.frontier.put(seed)
 
     def create_session(self):
         meta = MetaData(schema="crawldb")
         Base = declarative_base(metadata=meta)
         DATABASE_URI = 'postgres+psycopg2://postgres:rokzidarn@localhost:5432/crawldb'
+
         engine = create_engine(DATABASE_URI)
         Base.metadata.create_all(engine)
-
-        # Session = sessionmaker(bind=engine)
-
         session_factory = sessionmaker(bind=engine)
 
         return session_factory, engine
@@ -62,113 +60,96 @@ class Crawler:
         session.close()
         Session.remove()
 
-    def insert_site(self, domain, robots, session):
+    def insert_site(self, domain, robots, url, session):
         sitemaps = list(robots.sitemaps)  # get sitemaps
 
-        if len(sitemaps) > 0:
-            r = requests.get(sitemaps[0])
-            root = etree.fromstring(r.content)
-            for sitemap in root:
-                children = sitemap.getchildren()
-                candidate = children[0].text  # if sitemap link is not in frontier, add to it
-                if candidate not in self.scraped_pages:
-                    self.frontier.put([candidate, 0])
-
         if domain not in self.scraped_sites:
-            print('ROBOTS: ', robots)
             site = Site(
                 domain=domain,
                 robots_content=str(robots),
                 sitemap_content=sitemaps
             )
-
             session.add(site)
             session.commit()
-
-            self.scraped_sites.add(domain)
             site_id = site.id
+            self.scraped_sites.add(domain)
+
+            page = Page(
+                site_id=site_id,
+                page_type_code='FRONTIER',
+                url=url
+            )
+            session.add(page)
+            session.commit()
+            page_id = page.id
+            self.scraped_pages.add(url)
+
+            if len(sitemaps) > 0:
+                r = requests.get(sitemaps[0])
+                root = etree.fromstring(r.content)
+                for sitemap in root:
+                    children = sitemap.getchildren()
+                    candidate = children[0].text  # if sitemap link is not in frontier, add to it
+                    if candidate not in self.scraped_pages:
+                        self.frontier.put(candidate)
+                        self.insert_page(site_id, candidate, page_id, session)
+
         else:
             site = session.query(Site).filter(Site.domain == domain).first()
             site_id = site.id
 
         return site_id
 
-    def insert_page(self, site_id, base_url, html, session, frontier=False):
-        try:  # quick fix (SSL error, certificate verify failed)
-            status_code = requests.get(base_url).status_code
-        except:
-            return None
+    def insert_page(self, site_id, base_url, parent_id, session):
+        exists = session.query(Page).filter(Page.url == base_url).first()
 
-        md5 = hashlib.md5()  # compare exact HTML code (md5 hash function)
-        encoded = bytes(html, 'utf-8')
-        md5.update(encoded)
-        hashed = md5.digest()  # hash function on HTML code, check for duplication
-
-        if frontier:
+        if exists is None:
             page = Page(
                 site_id=site_id,
                 page_type_code='FRONTIER',
-                url=base_url,
-                http_status_code=status_code,
-                accessed_time=datetime.datetime.now().date(),
-                hash=hashed
+                url=base_url
             )
             session.add(page)
             session.commit()
-            return page.id
 
-        pages = session.query(Page).all()
-        hashes = [page.hash for page in pages]
-        if hashed not in hashes:
-            page = Page(
-                site_id=site_id,
-                page_type_code='HTML',
-                url=base_url,
-                html_content=html,
-                http_status_code=status_code,
-                accessed_time=datetime.datetime.now().date(),
-                hash=hashed
+            link = Link(
+                from_page=parent_id,
+                to_page=page.id
             )
-            session.add(page)
+            session.add(link)
             session.commit()
-            page_id = page.id
-        else:
-            page = session.query(Page).filter_by(hash=hashed).first()
-            if page.page_type_code == 'FRONTIER':  # update page
+
+    def update_page(self, base_url, html, session):
+        page = session.query(Page).filter(Page.url == base_url).first()
+
+        if page is not None:
+            md5 = hashlib.md5()  # compare exact HTML code (md5 hash function)
+            encoded = bytes(html, 'utf-8')
+            md5.update(encoded)
+            hashed = md5.digest()  # hash function on HTML code, check for duplication
+
+            pages = session.query(Page).all()
+            hashes = [page.hash for page in pages]
+            if hashed in hashes:
+                page.page_type_code = 'DUPLICATE'
+                session.commit()
+            else:
+                try:  # quick fix (SSL error, certificate verify failed)
+                    status_code = requests.get(base_url).status_code
+                except:
+                    return None
+
+                print('URL: ', base_url)
                 page.page_type_code = 'HTML'
                 page.html_content = html
+                page.http_status_code = status_code
+                page.accessed_time = datetime.datetime.now().date()
+                page.hash = hashed
                 session.commit()
-                page_id = page.id
-            else:
-                page = Page(
-                    site_id=site_id,
-                    page_type_code='DUPLICATE',
-                    url=base_url,
-                    http_status_code=status_code,
-                    accessed_time=datetime.datetime.now().date(),
-                    hash=hashed
-                )
-                session.add(page)
-                session.commit()
-                page_id = page.id
 
-        return page_id
+            return page.id
 
-    def insert_image(self, page_id, src, encoded, session):
-        content_type = src.split('.')
-        filename = content_type[-2].split('/')
-        #print('IMAGE: ', src)
-
-        image = Image(
-            page_id=page_id,
-            filename=filename[-1],
-            content_type=content_type[-1],
-            data=encoded,
-            accessed_time=datetime.datetime.now().date()
-        )
-
-        session.add(image)
-        session.commit()
+        return None
 
     def insert_page_data(self, site_id, url, encoded, session):
         pages = session.query(Page).all()
@@ -176,7 +157,6 @@ class Crawler:
 
         if url not in urls:
             content_type = url.split('.')[-1].upper()
-            print('FILE: ', url)
             page = Page(
                 site_id=site_id,
                 page_type_code='BINARY',
@@ -196,15 +176,23 @@ class Crawler:
             session.add(page_data)
             session.commit()
 
-    def insert_link(self, page_id, from_id, session):
-        link = Link(
-            from_page=from_id,
-            to_page=page_id
+    def insert_image(self, page_id, src, encoded, session):
+        content_type = src.split('.')
+        filename = content_type[-2].split('/')
+        # print('IMAGE: ', src)
+
+        image = Image(
+            page_id=page_id,
+            filename=filename[-1],
+            content_type=content_type[-1],
+            data=encoded,
+            accessed_time=datetime.datetime.now().date()
         )
-        session.add(link)
+
+        session.add(image)
         session.commit()
 
-    def extract_links_images(self, base_url, driver, robots, from_id):
+    def extract_links_images(self, base_url, driver, robots):
         html = driver.page_source
         links = driver.find_elements_by_xpath("//a[@href]")
         images = driver.find_elements_by_xpath("//img[@src]")
@@ -216,10 +204,8 @@ class Crawler:
         Session = scoped_session(session_factory)
         session = Session()
 
-        site_id = self.insert_site(domain, robots, session)
-        page_id = self.insert_page(site_id, base_url, html, session)
-        if from_id != 0:
-            self.insert_link(page_id, from_id, session)
+        site_id = self.insert_site(domain, robots, base_url, session)
+        page_id = self.update_page(base_url, html, session)
 
         if page_id is not None:
             for link in links:  # extract links
@@ -242,9 +228,9 @@ class Crawler:
                         continue
 
                     if url not in self.scraped_pages and robots.allowed(url, '*') and ('#' not in url):
-                        self.frontier.put([url, page_id])
+                        self.frontier.put(url)
+                        self.insert_page(site_id, url, page_id, session)
                         # if page is not duplicated and is allowed in robots, add to frontier
-                        self.insert_page(site_id, url, html, session, True)
 
             image_sources = list()
             for image in images:
@@ -263,10 +249,7 @@ class Crawler:
         Session.remove()
         driver.close()
 
-    def scrape_page(self, url_data):
-        url = url_data[0]
-        from_id = url_data[1]
-
+    def scrape_page(self, url):
         options = webdriver.ChromeOptions()
         options.add_argument("headless")
         options.add_experimental_option("prefs", {"profile.default_content_settings.cookies": 2})  # disable cookies
@@ -281,7 +264,7 @@ class Crawler:
 
         cdelay = robots.agent('*').delay
         if cdelay is None:
-            crawl_delay = 8
+            crawl_delay = 6
         else:
             crawl_delay = int(cdelay)
 
@@ -289,7 +272,7 @@ class Crawler:
 
         try:
             driver.get(url)
-            res = {'url': url, 'driver': driver, 'robots': robots, 'from_id': from_id}
+            res = {'url': url, 'driver': driver, 'robots': robots}
             return res  # result passed to callback function
         except:
             print('PROBLEM: ', url)
@@ -298,16 +281,15 @@ class Crawler:
     def post_scrape_callback(self, res):
         result = res.result()
         if result:
-            self.extract_links_images(result['url'], result['driver'], result['robots'], result['from_id'])
+            self.extract_links_images(result['url'], result['driver'], result['robots'])
 
     def run_crawler(self):
         while True:
             try:
-                url_data = self.frontier.get(timeout=60)
-                if url_data[0] not in self.scraped_pages:
-                    print('URL: ', url_data[0])
-                    self.scraped_pages.add(url_data[0])
-                    job = self.pool.submit(self.scrape_page, url_data)  # setup driver, get page from URL
+                url = self.frontier.get(timeout=60)
+                if url not in self.scraped_pages:
+                    self.scraped_pages.add(url)
+                    job = self.pool.submit(self.scrape_page, url)  # setup driver, get page from URL
                     job.add_done_callback(self.post_scrape_callback)  # get/save data to DB
             except Empty:  # if queue is empty for 60s stop crawling
                 return
@@ -319,12 +301,8 @@ class Crawler:
 # MAIN
 if __name__ == '__main__':
     seeds = ['https://e-uprava.gov.si', 'https://podatki.gov.si', 'http://www.e-prostor.gov.si', 'http://evem.gov.si']
-    # 'http://evem.gov.si'
-    crawl = Crawler(seeds, 8)  # number of workers
+    crawl = Crawler(seeds, 12)  # number of workers
+
     # sys.stdout = open('data/stdout.txt', 'w')
-
-    crawl.delete_all()
+    # crawl.delete_all()
     crawl.run_crawler()
-
-    # SELECT sum(numbackends) FROM pg_stat_database;
-    # https://stackoverflow.com/questions/30778015/how-to-increase-the-max-connections-in-postgres
