@@ -4,4 +4,7 @@ DotGovCrawlerSelenium
 # Web Information Extraction and Retrieval
 Python + Selenium + Chromedriver + Postgres + SQLAlchemy
 
-default run (12 workers): python crawler.py
+# install and run:
+
+pip install -r requirements.txt
+python crawler.py
